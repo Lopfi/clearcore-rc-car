@@ -10,10 +10,54 @@ static RcInput rc;
 static Drive drive;
 static bool armed = false;
 
+static float vSupplyMax = 0.0f;  // peak since the last status line
+
+// Same conditions ClearCore shows as blink codes on its status LED
+static void printClearCoreStatus(const char *prefix, StatusManager::StatusRegister s) {
+    if (!s.reg) return;
+    Serial.print(prefix);
+    if (s.bit.VSupplyOverVoltage)  Serial.print(" VSUPPLY-HIGH(>32V, motors off)");
+    if (s.bit.VSupplyUnderVoltage) Serial.print(" VSUPPLY-LOW(<10V)");
+    if (s.bit.HBridgeOverloaded)   Serial.print(" HBRIDGE-OVERLOAD");
+    if (s.bit.HBridgeReset)        Serial.print(" HBRIDGE-RESET");
+    if (s.bit.Overloaded5V)        Serial.print(" 5V-OVERLOAD");
+    if (s.bit.OutputOverloaded)    Serial.print(" IO-OVERLOAD");
+    if (s.bit.CcioOverloaded)      Serial.print(" CCIO-OVERLOAD");
+    if (s.bit.CcioLinkBroken)      Serial.print(" CCIO-LINK");
+    if (s.bit.AdcTimeout)          Serial.print(" ADC-TIMEOUT");
+    if (s.bit.SdCardError)         Serial.print(" SD-CARD");
+    Serial.print(" (Vsupply=");
+    Serial.print(AdcMgr.AnalogVoltage(AdcManager::ADC_VSUPPLY_MON), 1);
+    Serial.println("V)");
+}
+
+static void watchClearCoreStatus() {
+    const float v = AdcMgr.AnalogVoltage(AdcManager::ADC_VSUPPLY_MON);
+    if (v > vSupplyMax) vSupplyMax = v;
+
+    // Ethernet isn't used, so its "disconnected" bits would just be noise
+    StatusManager::StatusRegister mask(UINT32_MAX);
+    mask.bit.EthernetDisconnect = 0;
+    mask.bit.EthernetRemoteFault = 0;
+    mask.bit.EthernetPhyInitFailed = 0;
+    mask.bit.NvmDesync = 0;
+    printClearCoreStatus("CLEARCORE ERROR:", StatusMgr.StatusRisen(mask));
+    printClearCoreStatus("CLEARCORE cleared:", StatusMgr.StatusFallen(mask));
+}
+
 static void printStatus(bool link, float left, float right) {
+    Serial.print("V=");
+    Serial.print(AdcMgr.AnalogVoltage(AdcManager::ADC_VSUPPLY_MON), 1);
+    Serial.print("(max ");
+    Serial.print(vSupplyMax, 1);
+    Serial.print(") ");
+    vSupplyMax = 0.0f;
+    if (Drive::supplyFault()) Serial.print("SUPPLY-FAULT ");
     Serial.print(link ? "LINK " : "NOLINK ");
     Serial.print(armed ? "ARMED " : "safe  ");
-    if (drive.faulted()) Serial.print("MOTOR-FAULT ");
+    if (drive.gaveUp()) Serial.print("MOTOR-FAULT(re-arm!) ");
+    else if (drive.recovering()) Serial.print("MOTOR-FAULT(recovering) ");
+    else if (drive.faulted()) Serial.print("MOTOR-FAULT ");
     Serial.print("frames=");
     Serial.print(rc.frames());
     Serial.print(" err=");
@@ -34,10 +78,13 @@ void setup() {
     Serial.begin(115200);  // USB debug output
     rc.begin();
     drive.begin();
+    ARMED_LED_OUTPUT.Mode(Connector::OUTPUT_DIGITAL);
+    ARMED_LED_OUTPUT.State(false);
 }
 
 void loop() {
     rc.poll();
+    watchClearCoreStatus();
 
     const bool link = rc.signalOk();
 
@@ -81,6 +128,7 @@ void loop() {
 
     drive.update(armed, left, right);
     ConnectorLed.State(armed);
+    ARMED_LED_OUTPUT.State(armed);
 
     static uint32_t lastPrint = 0;
     if (millis() - lastPrint >= 250) {

@@ -74,6 +74,10 @@ and make sure your driver accepts it.
 
 - Arms only when: link OK, arm switch (CH5) high, throttle centered.
 - Link lost / receiver failsafe / switch off → motors ramp to 0, then disable.
+- Motor fault (step/dir): the faulted motor's enable is cycled to clear the
+  ClearPath shutdown, the other motor brakes to 0, and driving resumes once
+  HLFB is back. After `FAULT_MAX_RETRIES` failed attempts it gives up until
+  you disarm and re-arm. Timings are in `config.h`.
 - Onboard user LED = armed.
 - Throttle stick must be self-centering for forward/reverse (or use a
   spring-loaded gimbal / set `CH_THROTTLE` to another channel).
