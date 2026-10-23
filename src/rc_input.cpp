@@ -22,12 +22,59 @@ static inline uint16_t sbusToUs(uint16_t raw) { return (uint16_t)((raw * 5u) / 8
 // iBus: 0x20 0x40 | 14 x uint16 LE | checksum uint16 LE   (32 bytes)
 static constexpr uint8_t FRAME_LEN = 32;
 static constexpr uint8_t IBUS_CHANNELS = 14;
+
+#elif RC_PROTOCOL == RC_PROTOCOL_PPM
+// PPM: one pulse per channel, channel value = time between consecutive pulses,
+// a gap > 3 ms marks the start of a new frame. Measured with an edge
+// interrupt (only DI-6 .. A-12 support interrupts). Using the same edge for
+// every measurement makes the signal polarity irrelevant.
+static constexpr uint8_t FRAME_LEN = 1;  // unused
+static constexpr uint8_t PPM_MAX_CH = 8;
+static constexpr uint32_t PPM_SYNC_US = 3000;
+static constexpr uint8_t PPM_INVALID = 0xFF;
+
+static volatile uint16_t s_work[PPM_MAX_CH];
+static volatile uint16_t s_out[PPM_MAX_CH];
+static volatile uint8_t  s_ch = PPM_INVALID;
+static volatile uint8_t  s_outCount = 0;
+static volatile uint32_t s_lastEdgeUs = 0;
+static volatile uint32_t s_ppmFrames = 0;
+static volatile uint32_t s_ppmErrors = 0;
+
+static void ppmIsr() {
+    const uint32_t now = micros();
+    const uint32_t d = now - s_lastEdgeUs;
+    s_lastEdgeUs = now;
+
+    if (d > PPM_SYNC_US) {                       // sync gap -> frame complete
+        if (s_ch != PPM_INVALID && s_ch >= 4) {
+            for (uint8_t i = 0; i < s_ch; i++) s_out[i] = s_work[i];
+            s_outCount = s_ch;
+            s_ppmFrames++;
+        }
+        s_ch = 0;
+        return;
+    }
+    if (s_ch == PPM_INVALID) return;             // wait for next sync
+    if (d < 700 || d > 2300 || s_ch >= PPM_MAX_CH) {
+        s_ch = PPM_INVALID;                      // glitch -> drop this frame
+        s_ppmErrors++;
+        return;
+    }
+    s_work[s_ch++] = (uint16_t)d;
+}
 #else
 #error "Unknown RC_PROTOCOL"
 #endif
 
 void RcInput::begin() {
     for (uint8_t i = 0; i < MAX_CHANNELS; i++) m_us[i] = 1500;
+
+#if RC_PROTOCOL == RC_PROTOCOL_PPM
+    RC_PPM_INPUT.InterruptHandlerSet(&ppmIsr, InputManager::RISING, true);
+    InputMgr.InterruptsEnabled(true);
+    return;
+#endif
 
 #if RC_PROTOCOL == RC_PROTOCOL_SBUS
     // ClearCore's "RS232" mode inverts the UART signal on 0/5 V levels -
@@ -36,17 +83,33 @@ void RcInput::begin() {
     RC_PORT.Speed(100000);
     RC_PORT.Parity(SerialBase::PARITY_E);
     RC_PORT.StopBits(2);
-#else
+#elif RC_PROTOCOL == RC_PROTOCOL_IBUS
     RC_PORT.Mode(Connector::TTL);
     RC_PORT.Speed(115200);
     RC_PORT.Parity(SerialBase::PARITY_N);
     RC_PORT.StopBits(1);
 #endif
+#if RC_PROTOCOL != RC_PROTOCOL_PPM
     RC_PORT.CharSize(8);
     RC_PORT.PortOpen();
+#endif
 }
 
 void RcInput::poll() {
+#if RC_PROTOCOL == RC_PROTOCOL_PPM
+    if (s_ppmFrames != m_frames) {
+        noInterrupts();
+        const uint8_t n = s_outCount;
+        for (uint8_t i = 0; i < n; i++) m_us[i] = s_out[i];
+        m_frames = s_ppmFrames;
+        m_errors = s_ppmErrors;
+        interrupts();
+        m_failsafe = false;
+        m_haveFrame = true;
+        m_lastFrameMs = millis();
+    }
+    return;
+#endif
     const uint32_t now = micros();
     int16_t c;
     while ((c = RC_PORT.CharGet()) >= 0) {
@@ -62,7 +125,7 @@ void RcInput::feed(uint8_t b, uint32_t nowUs) {
 
 #if RC_PROTOCOL == RC_PROTOCOL_SBUS
     if (m_idx == 0 && b != SBUS_HEADER) return;
-#else
+#elif RC_PROTOCOL == RC_PROTOCOL_IBUS
     if (m_idx == 0 && b != 0x20) return;
     if (m_idx == 1 && b != 0x40) {
         m_idx = 0;
@@ -104,7 +167,7 @@ void RcInput::decodeFrame() {
     m_failsafe = (flags & SBUS_FLAG_FAILSAFE) != 0;
     if (flags & SBUS_FLAG_FRAME_LOST) m_errors++;  // single lost frame, informational
 
-#else  // IBUS
+#elif RC_PROTOCOL == RC_PROTOCOL_IBUS
     uint16_t sum = 0xFFFF;
     for (uint8_t i = 0; i < 30; i++) sum -= m_buf[i];
     const uint16_t rxSum = (uint16_t)m_buf[30] | ((uint16_t)m_buf[31] << 8);

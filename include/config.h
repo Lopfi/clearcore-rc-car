@@ -6,21 +6,24 @@
 // ============================================================================
 #define RC_PROTOCOL_SBUS 1   // 100000 baud, 8E2, inverted  -> COM port in RS232 mode
 #define RC_PROTOCOL_IBUS 2   // 115200 baud, 8N1, normal    -> COM port in TTL mode
+#define RC_PROTOCOL_PPM  3   // PPM sum signal on an interrupt-capable input (DI-6 .. A-12)
 
 #ifndef RC_PROTOCOL
-#define RC_PROTOCOL RC_PROTOCOL_IBUS
+#define RC_PROTOCOL RC_PROTOCOL_PPM
 #endif
 
 // Which ClearCore COM connector the receiver is wired to (ConnectorCOM0 / ConnectorCOM1)
-#define RC_PORT ConnectorCOM1
+#define RC_PORT ConnectorCOM0
+// Input used for PPM (must be DI-6, DI-7, DI-8, A-9 .. A-12)
+#define RC_PPM_INPUT ConnectorDI6
 
 // No valid frame for this long -> failsafe (motors stop, disarm)
 constexpr uint32_t RC_TIMEOUT_MS = 100;
 
 // Channel mapping, 0-based (Mode 2 AETR: ch1 = index 0 ...)
 constexpr uint8_t CH_STEERING = 0;   // right stick left/right
-constexpr uint8_t CH_THROTTLE = 2;   // left stick up/down (use a self-centering stick for forward/reverse!)
-constexpr uint8_t CH_ARM      = 4;   // a 2-position switch
+constexpr uint8_t CH_THROTTLE = 1;   // left stick up/down (use a self-centering stick for forward/reverse!)
+constexpr uint8_t CH_ARM      = 2;   // a 2-position switch
 
 // Arm switch: set USE_ARM_SWITCH to 0 to arm automatically once the link is up
 #ifndef USE_ARM_SWITCH
@@ -28,7 +31,7 @@ constexpr uint8_t CH_ARM      = 4;   // a 2-position switch
 #endif
 constexpr uint16_t ARM_THRESHOLD_US = 1700;
 
-constexpr uint16_t STICK_DEADBAND_US = 20;   // around 1500 us center
+constexpr uint16_t STICK_DEADBAND_US = 30;   // around 1500 us center
 constexpr float    STEERING_GAIN     = 0.7f; // how hard steering differentiates the wheels
 
 // Mixing: 1 = differential/tank (throttle + steering), 0 = direct (CH_LEFT/CH_RIGHT)
