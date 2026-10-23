@@ -1,0 +1,6 @@
+{
+    "name": "framework-arduino-samd-clearcore",
+    "version": "1.7.4",
+    "description": "Teknic ClearCore Arduino wrapper (official release, repackaged for PlatformIO)",
+    "keywords": ["framework", "arduino", "teknic", "clearcore"]
+}
